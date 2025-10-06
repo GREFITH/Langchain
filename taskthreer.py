@@ -4,6 +4,7 @@ import json
 from typing_extensions import TypedDict
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.tools import tool
+from langgraph.graph import StateGraph, START, END
 
 # loading .env
 load_dotenv()
@@ -13,7 +14,7 @@ if not api_key:
 
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", api_key=api_key)
 
-#class
+# class
 class OrderState(TypedDict):
     order_type: str
     items: list
@@ -65,7 +66,7 @@ def unsupported(order_type: str):
         "notes": f"Order type '{order_type}' is not supported"
     }
 
-# funtion
+# routing function
 def route_order(input_data: dict) -> dict:
     """
     Routes an incoming order to the proper path based on order_type.
@@ -82,7 +83,29 @@ def route_order(input_data: dict) -> dict:
     else:
         return unsupported.invoke(input={"order_type": order_type})
 
-#running the router
+# graphical part
+def build_router_graph():
+    graph = StateGraph(OrderState)
+    graph.add_node("dine_in", dine_in)
+    graph.add_node("takeout", takeout)
+    graph.add_node("delivery", delivery)
+    graph.add_node("unsupported", unsupported)
+
+    # Routing edges from START
+    graph.add_edge(START, "dine_in")
+    graph.add_edge(START, "takeout")
+    graph.add_edge(START, "delivery")
+    graph.add_edge(START, "unsupported")
+
+    # All nodes go to END after execution
+    graph.add_edge("dine_in", END)
+    graph.add_edge("takeout", END)
+    graph.add_edge("delivery", END)
+    graph.add_edge("unsupported", END)
+
+    return graph.compile()
+
+# running the router
 if __name__ == "__main__":
     input_order = {
         "order_type": "delivery",
@@ -91,6 +114,12 @@ if __name__ == "__main__":
         "requested_time": "ASAP"
     }
 
+   
     final_state = route_order(input_order)
     print("\nRouted Order Summary:")
     print(json.dumps(final_state, indent=2))
+
+    
+    print("\nOrder Routing Graph:")
+    router_graph = build_router_graph()
+    router_graph.get_graph().print_ascii()
