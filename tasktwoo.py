@@ -4,6 +4,7 @@ import json
 from typing_extensions import TypedDict
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.tools import tool
+from langgraph.graph import StateGraph, START, END
 
 # loading .env
 load_dotenv()
@@ -60,7 +61,7 @@ def draft_quote(capacity_ok: bool, ingredients_ok: bool, headcount: int):
 @tool
 def manager_gate(status: str, reason: str, quote: dict):
     """Manual approval by user"""
-    print("\n💡 Quote Preview:")
+    print("\nQuote Preview:")
     print(json.dumps(quote, indent=2))
     while True:
         approval = input("Do you approve this quote? (yes/no): ").strip().lower()
@@ -76,11 +77,10 @@ def finalize(status: str, quote: dict, reason: str):
     """Finalize workflow"""
     return {"status": status, "quote": quote, "reason": reason}
 
+
 # sequential workflow
 def run_catering_orchestrator_manual(input_data: dict):
-   
-   # Step 1: Capture the request
-
+    # Step 1: Capture the request
     state = capture_request.invoke(input={
         "event_date": input_data["event_date"],
         "headcount": input_data["headcount"],
@@ -122,7 +122,28 @@ def run_catering_orchestrator_manual(input_data: dict):
 
     return state
 
-# running the orchestrator
+# building the graph
+def build_catering_graph():
+    graph = StateGraph(CateringState)
+    graph.add_node("capture_request", capture_request)
+    graph.add_node("check_capacity", check_capacity)
+    graph.add_node("check_ingredients", check_ingredients)
+    graph.add_node("draft_quote", draft_quote)
+    graph.add_node("manager_gate", manager_gate)
+    graph.add_node("finalize", finalize)
+
+    # Linear flow
+    graph.add_edge(START, "capture_request")
+    graph.add_edge("capture_request", "check_capacity")
+    graph.add_edge("check_capacity", "check_ingredients")
+    graph.add_edge("check_ingredients", "draft_quote")
+    graph.add_edge("draft_quote", "manager_gate")
+    graph.add_edge("manager_gate", "finalize")
+    graph.add_edge("finalize", END)
+
+    return graph.compile()
+
+# running the main
 if __name__ == "__main__":
     input_data = {
         "event_date": "2025-11-12",
@@ -130,6 +151,12 @@ if __name__ == "__main__":
         "menu": ["grilled chicken", "pasta primavera", "salad"]
     }
 
+    
     final_state = run_catering_orchestrator_manual(input_data)
     print("\nFinal Catering State:")
     print(json.dumps(final_state, indent=2))
+
+   
+    print("\nWorkflow Graph:")
+    orchestrator_graph = build_catering_graph()
+    orchestrator_graph.get_graph().print_ascii()
