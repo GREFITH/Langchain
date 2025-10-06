@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 from typing_extensions import TypedDict
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.tools import tool
+from langgraph.graph import StateGraph, START, END
+from pprint import pprint
 
 # loading .env
 load_dotenv()
@@ -28,46 +30,33 @@ class BakeState(TypedDict):
 #defining tool for worker
 @tool
 def bake_batch(item: str, target_temp_c: int, batch_size: int) -> dict:
-    """
-    Simulates baking stages with heartbeats. Randomly fails sometimes.
-    """
+    """Simulates baking stages with heartbeats and random failures"""
     stages = ["preheat", "load", "bake", "finish"]
     peak_temp = 0
 
     for stage in stages:
-        
         time.sleep(0.5)
-
-     
         core_temp = random.randint(target_temp_c-10, target_temp_c+5)
         peak_temp = max(peak_temp, core_temp)
-
-        
-        heartbeat_ok = random.choice([True]*8 + [False]*2)  
+        heartbeat_ok = random.choice([True]*8 + [False]*2)  # 20% chance of failure
 
         print(f"Stage: {stage}, core_temp: {core_temp}, heartbeat_ok: {heartbeat_ok}")
-
         if not heartbeat_ok or core_temp < target_temp_c - 5:
-            
             return {"status": "failed", "reason": "no heartbeat / oven temp instability"}
 
-    
     return {"status": "completed", "stages": stages, "peak_oven_c": peak_temp, "batch_size": batch_size}
 
 #defining tool for superviosr
 @tool
 def supervise_bake(item: str, target_temp_c: int, batch_size: int, max_retries: int = 3) -> BakeState:
-    """
-    Supervises bake_batch with retries up to max_retries.
-    """
+    """Supervises bake_batch with retries up to max_retries"""
     attempts = 0
     while attempts < max_retries:
         attempts += 1
-        print(f"\n Attempt {attempts} for {item} batch")
+        print(f"\nAttempt {attempts} for {item} batch")
         result = bake_batch.invoke(input={"item": item, "target_temp_c": target_temp_c, "batch_size": batch_size})
-        
+
         if result["status"] == "completed":
-            # Successful bake
             return {
                 "item": item,
                 "target_temp_c": target_temp_c,
@@ -79,10 +68,9 @@ def supervise_bake(item: str, target_temp_c: int, batch_size: int, max_retries: 
                 "reason": ""
             }
         else:
-            print(f" Bake failed: {result['reason']}")
-            time.sleep(1)  
+            print(f"Bake failed: {result['reason']}")
+            time.sleep(1)
 
-    #   ending or terminating  after max retries
     return {
         "item": item,
         "target_temp_c": target_temp_c,
@@ -94,15 +82,28 @@ def supervise_bake(item: str, target_temp_c: int, batch_size: int, max_retries: 
         "reason": "no heartbeat / oven temp instability"
     }
 
-# running the supervisor
-if __name__ == "__main__":
-    input_data = {
-        "item": "sourdough",
-        "target_temp_c": 230,
-        "batch_size": 12
-    }
+# graphical representation
+def build_supervisor_graph():
+    graph = StateGraph(BakeState)
+    graph.add_node("bake_batch", bake_batch)
+    graph.add_node("supervise_bake", supervise_bake)
 
+    graph.add_edge(START, "supervise_bake")   
+    graph.add_edge("supervise_bake", "bake_batch")  
+    graph.add_edge("bake_batch", END)
+
+    return graph.compile()
+
+# running the main
+if __name__ == "__main__":
+    input_data = {"item": "sourdough", "target_temp_c": 230, "batch_size": 12}
+
+   
     final_state = supervise_bake.invoke(input=input_data)
-    print("\n Final Bake State:")
-    from pprint import pprint
+    print("\nFinal Bake State (Manual Run):")
     pprint(final_state)
+
+   
+    print("\nSupervisor Graph:")
+    supervisor_graph = build_supervisor_graph()
+    supervisor_graph.get_graph().print_ascii()
